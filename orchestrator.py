@@ -4,7 +4,7 @@
 Runs the full mock agent pipeline:
 
     discovery → requirements (ODPS) → contract (ODCS) → ingestion
-    → transformation → product build → audit & compliance → lineage
+    → transformation → product build → audit & compliance → lineage → dashboard
 
 Each agent prints its report and writes artifacts under output/.
 Exits non-zero if any agent reports FAILURE.
@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "agents"))
 from common.models import PipelineContext  # noqa: E402
 import audit_compliance_agent  # noqa: E402
 import contract_agent  # noqa: E402
+import dashboard_agent  # noqa: E402
 import discovery_agent  # noqa: E402
 import ingestion_agent  # noqa: E402
 import lineage_agent  # noqa: E402
@@ -31,11 +32,12 @@ PIPELINE = [
     ("1. Discovery — anything similar already in the ecosystem?", discovery_agent),
     ("2. Requirements — ODPS v4.1 data product definition", requirements_agent),
     ("3. Contract — ODCS v3.1.0 data contract", contract_agent),
-    ("4. Ingestion — bronze pipelines from contract schema", ingestion_agent),
+    ("4. Ingestion — land 5 source tables into bronze", ingestion_agent),
     ("5. Transformation — silver conformance + gold customer_360", transformation_agent),
-    ("6. Product build — assemble, DQ-gate and publish", product_build_agent),
+    ("6. Product build — real DQ gate, assemble and publish", product_build_agent),
     ("7. Audit & compliance — governance review", audit_compliance_agent),
     ("8. Lineage — end-to-end source→port lineage", lineage_agent),
+    ("9. Dashboard — render the lineage + data UI", dashboard_agent),
 ]
 
 

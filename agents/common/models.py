@@ -9,15 +9,21 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_DIR = REPO_ROOT / "output"
+SEED_DIR = REPO_ROOT / "data" / "seed"
 ODPS_PATH = REPO_ROOT / "data-product" / "customer-360.odps.yaml"
 ODCS_PATH = REPO_ROOT / "data-contract" / "customer-360.odcs.yaml"
 CATALOG_PATH = Path(__file__).resolve().parent / "mock_catalog.json"
+
+# Fixed "as of" date for every derived/relative calculation (age bands, 90-day
+# transaction windows, 12-month CSAT windows, profile refresh timestamps) so
+# the pipeline is reproducible regardless of when it is actually run.
+REFERENCE_DATE = date(2026, 7, 5)
 
 
 def utc_now() -> str:
@@ -95,6 +101,11 @@ def write_artifact(relative_path: str, content: str) -> str:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
     return str(target.relative_to(REPO_ROOT))
+
+
+def write_json_artifact(relative_path: str, records: Any) -> str:
+    """Write a JSON artifact under output/ and return its repo-relative path."""
+    return write_artifact(relative_path, json.dumps(records, indent=2, default=str))
 
 
 def print_report(result: AgentResult) -> None:
