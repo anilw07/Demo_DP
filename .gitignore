@@ -1,0 +1,7 @@
+# runtime artifacts written by the agents
+output/*
+!output/.gitkeep
+
+__pycache__/
+*.pyc
+.venv/

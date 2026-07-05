@@ -1,0 +1,287 @@
+# =============================================================================
+# Data Product Requirement Definition
+# Standard : Open Data Product Specification (ODPS) v4.1
+#            https://opendataproducts.org/v4.1/
+# Product  : Retail Banking Customer 360
+# Holder   : Meridian Retail Bank (fictional) — Customer Data Domain
+# Linked contract: ../data-contract/customer-360.odcs.yaml (ODCS v3.1.0)
+# =============================================================================
+schema: 'https://opendataproducts.org/v4.1/schema/odps.yaml'
+version: 4.1
+
+product:
+
+  # ---------------------------------------------------------------------------
+  # Why this product exists (ODPS 4.1 productStrategy)
+  # ---------------------------------------------------------------------------
+  productStrategy:
+    objectives:
+      - en: Provide a single, trusted 360-degree view of every retail banking customer
+      - en: Reduce customer churn by enabling proactive retention actions
+      - en: Shorten complaint resolution time by exposing full customer context to service teams
+      - en: Support KYC/AML reviews with a consolidated party profile
+    strategicAlignment:
+      - en: Meridian Retail Bank "Customer First 2027" transformation programme
+      - en: Group data mesh strategy — domain-owned, product-managed data
+    contributesToKPI:
+      id: bizkpi-retail-churn-rate
+      name: Retail Customer Churn Rate
+      unit: percentage
+      target: 5
+      direction: at_most
+      timeframe: by Q4 2027
+    productKPIs:
+      - id: kpi-identity-resolution
+        name: Identity Resolution Match Rate
+        unit: percentage
+        target: 98
+        direction: at_least
+        frequency: daily
+        calculation: resolved_parties / total_source_parties
+      - id: kpi-c360-freshness
+        name: Customer 360 Data Freshness
+        unit: hours
+        target: 24
+        direction: at_most
+        frequency: daily
+        calculation: max(current_ts - source_extract_ts) across all source feeds
+      - id: kpi-consumer-adoption
+        name: Active Consuming Use Cases
+        unit: count
+        target: 5
+        direction: at_least
+        frequency: monthly
+        calculation: distinct downstream consumers with >= 1 query in the month
+
+  # ---------------------------------------------------------------------------
+  # Link to the data contract (composition seam with ODCS)
+  # ---------------------------------------------------------------------------
+  contract:
+    id: c360-odcs-2f6a9e40
+    type: ODCS
+    contractVersion: 3.1.0
+    contractURL: '../data-contract/customer-360.odcs.yaml'
+
+  # ---------------------------------------------------------------------------
+  # Product identity and description
+  # ---------------------------------------------------------------------------
+  details:
+    en:
+      name: Retail Banking Customer 360
+      productID: c360-retail-banking-001
+      productVersion: 0.1.0
+      valueProposition: >-
+        One governed, daily-refreshed profile per retail customer, combining
+        accounts, party master data, transaction behaviour, service tickets and
+        product holdings — ready for churn analytics, next-best-action,
+        complaint handling and regulatory reporting.
+      description: >-
+        The Customer 360 data product consolidates five source tables from the
+        bank's core and channel systems: Customer Account (core banking),
+        Party Details (CRM party master), Transaction Details (payments hub),
+        Customer_Ticket_Details (service management) and Customer Product
+        Details (product catalogue holdings). Source records are ingested into
+        a bronze layer, conformed and de-duplicated in silver, and joined into
+        a single gold table `customer_360` with exactly one row per party,
+        including balance aggregates, transaction behaviour features,
+        open-ticket and CSAT summaries, product holding flags and a
+        churn-risk indicator.
+      productSeries: Customer Data Domain Products
+      visibility: internal
+      status: draft
+      type: derived data
+      categories:
+        - retail-banking
+        - customer-360
+        - customer-analytics
+      standards:
+        - ODPS 4.1
+        - ODCS 3.1.0
+      tags:
+        - customer-360
+        - churn
+        - kyc
+        - retail-banking
+        - data-mesh
+      brandSlogan: Know every customer as one customer.
+      logoURL: 'https://data.meridianbank.example/logos/customer-360.png'
+      OutputFileFormats:
+        - Delta
+        - Parquet
+        - JSON
+
+  # ---------------------------------------------------------------------------
+  # Pricing (internal chargeback) — reuses SLA / DQ / access via $ref
+  # ---------------------------------------------------------------------------
+  pricingPlans:
+    declarative:
+      en:
+        - name: Internal Domain Chargeback
+          priceCurrency: EUR
+          price: 0
+          billingDuration: month
+          unit: recurring
+          maxTransactionQuantity: unlimited
+          offering:
+            - Read access to the gold `customer_360` table via Unity Catalog
+            - REST API access for operational lookups
+            - Daily parquet extract for downstream batch consumers
+          paymentGateway:
+            $ref: '#/product/paymentGateways/internal'
+          dataQuality:
+            $ref: '#/product/dataQuality/declarative/default'
+          SLA:
+            $ref: '#/product/SLA/declarative/default'
+          access:
+            $ref: '#/product/dataAccess/SQL'
+
+  # ---------------------------------------------------------------------------
+  # Service level agreement
+  # ---------------------------------------------------------------------------
+  SLA:
+    declarative:
+      default:
+        name:
+          en: Customer 360 Standard SLA
+        dimensions:
+          - dimension: uptime
+            objective: 99.5
+            unit: percent
+          - dimension: updateFrequency
+            objective: 24
+            unit: hours
+          - dimension: responseTime
+            objective: 500
+            unit: milliseconds
+          - dimension: timeToRepair
+            objective: 8
+            unit: hours
+          - dimension: supportHours
+            objective: 5x8
+            unit: businessdays
+
+  # ---------------------------------------------------------------------------
+  # Data quality objectives (declarative; enforced rules live in the ODCS
+  # contract quality section)
+  # ---------------------------------------------------------------------------
+  dataQuality:
+    declarative:
+      default:
+        displaytitle:
+          en: Customer 360 Data Quality Objectives
+        dimensions:
+          - dimension: completeness
+            displaytitle:
+              en: Mandatory attributes populated
+            objective: 99
+            unit: percentage
+          - dimension: accuracy
+            displaytitle:
+              en: Attributes reconciled against source systems
+            objective: 98
+            unit: percentage
+          - dimension: uniqueness
+            displaytitle:
+              en: Exactly one row per resolved party
+            objective: 100
+            unit: percentage
+          - dimension: timeliness
+            displaytitle:
+              en: Refreshed within 24 hours of source extract
+            objective: 24
+            unit: hours
+
+  # ---------------------------------------------------------------------------
+  # Output ports
+  # ---------------------------------------------------------------------------
+  dataAccess:
+    SQL:
+      outputPorttype: SQL
+      authenticationMethod: OAuth
+      specification: Databricks Unity Catalog
+      format: Delta
+      accessURL: 'databricks://meridian-lakehouse/customer_domain/gold/customer_360'
+      documentationURL: 'https://data.meridianbank.example/docs/customer-360/sql'
+    API:
+      outputPorttype: API
+      authenticationMethod: OAuth
+      specification: OAS
+      format: JSON
+      accessURL: 'https://api.meridianbank.example/customer-360/v1'
+      documentationURL: 'https://data.meridianbank.example/docs/customer-360/api'
+    File:
+      outputPorttype: file
+      authenticationMethod: Token
+      specification: object storage
+      format: Parquet
+      accessURL: 'abfss://exports@meridianlake.dfs.core.windows.net/customer_360/'
+      documentationURL: 'https://data.meridianbank.example/docs/customer-360/file'
+
+  paymentGateways:
+    internal:
+      type: internal chargeback
+      version: 1
+      reference: 'https://finops.meridianbank.example/chargeback'
+
+  # ---------------------------------------------------------------------------
+  # License / terms of use (internal)
+  # ---------------------------------------------------------------------------
+  license:
+    en:
+      scope:
+        definition: >-
+          Internal use within Meridian Retail Bank group entities only.
+          Consumption for direct marketing requires the marketing_consent flag
+          to be honoured. PII attributes are masked for roles without
+          c360_pii_reader entitlement.
+        geographicalArea:
+          - EU
+        permanent: false
+        exclusive: false
+        rights:
+          - Reproduction
+          - Display
+          - Modification
+      termination:
+        terminationConditions: >-
+          Access is revoked when the consuming use case is decommissioned or
+          entitlement review fails.
+        continuityConditions: >-
+          12 months notice before end-of-life; superseding product version
+          offered for migration.
+      governance:
+        ownership: Meridian Retail Bank — Customer Data Domain
+        damages: >-
+          Use outside the entitled scope is subject to internal data governance
+          sanctions and mandatory incident reporting.
+        confidentiality: >-
+          Contains personal data (GDPR) and bank secrecy protected data.
+        applicableLaws: >-
+          EU GDPR; applicable national banking secrecy law; EBA guidelines.
+        audit: >-
+          All access is logged and reviewed quarterly by the Data Governance
+          Office (see audit & compliance agent).
+
+  # ---------------------------------------------------------------------------
+  # Data holder
+  # ---------------------------------------------------------------------------
+  dataHolder:
+    en:
+      legalName: Meridian Retail Bank Plc (fictional)
+      businessId: FI-9988776-5
+      email: customer-data-domain@meridianbank.example
+      URL: 'https://www.meridianbank.example'
+      streetAddress: Bankside Avenue 1
+      postalCode: '00100'
+      addressLocality: Helsinki
+      addressCountry: Finland
+
+  # ---------------------------------------------------------------------------
+  # Support
+  # ---------------------------------------------------------------------------
+  support:
+    phoneNumber: '+358 10 555 0100'
+    phoneServiceHours: Mon-Fri 09:00-17:00 (EET)
+    email: c360-support@meridianbank.example
+    emailServiceHours: Mon-Fri 09:00-17:00 (EET)
+    documentationURL: 'https://data.meridianbank.example/docs/customer-360'

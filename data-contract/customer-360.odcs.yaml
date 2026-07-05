@@ -1,0 +1,768 @@
+# =============================================================================
+# Data Contract Definition
+# Standard : Open Data Contract Standard (ODCS) v3.1.0 — Bitol / LF AI & Data
+#            https://bitol-io.github.io/open-data-contract-standard/v3.1.0/
+# Contract : Retail Banking Customer 360
+# Tenant   : Meridian Retail Bank (fictional)
+# Linked data product: ../data-product/customer-360.odps.yaml (ODPS v4.1)
+# =============================================================================
+apiVersion: v3.1.0
+kind: DataContract
+id: 2f6a9e40-7c1b-4d53-9b8a-c360aa010001
+name: customer-360
+version: 1.0.0
+status: active
+domain: customer
+dataProduct: Retail Banking Customer 360
+tenant: MeridianRetailBank
+
+description:
+  purpose: >-
+    Defines the schema, quality rules and service levels for the Customer 360
+    data product: five consumed source tables (customer_account, party_details,
+    transaction_details, customer_ticket_details, customer_product_details)
+    and the produced gold table customer_360 (one row per resolved party).
+  limitations: >-
+    No use for direct marketing unless marketing_consent is true. PII columns
+    (classification: restricted) are masked for consumers without the
+    c360_pii_reader role. Not a source for regulatory capital calculations.
+  usage: >-
+    Churn analytics, next-best-action, complaint handling context, KYC/AML
+    case review and customer-level management reporting.
+
+# -----------------------------------------------------------------------------
+# Infrastructure — Databricks lakehouse (medallion architecture)
+# -----------------------------------------------------------------------------
+servers:
+  - server: meridian-lakehouse-prod
+    type: databricks
+    host: adb-8842217633045.11.azuredatabricks.net
+    catalog: customer_domain
+    schema: gold
+    description: Production Unity Catalog serving layer for the gold customer_360 table.
+  - server: meridian-lakehouse-bronze
+    type: databricks
+    host: adb-8842217633045.11.azuredatabricks.net
+    catalog: customer_domain
+    schema: bronze
+    description: Raw ingestion layer for the five consumed source tables.
+
+# -----------------------------------------------------------------------------
+# Schema — 5 source objects (consumed) + 1 output object (produced)
+# -----------------------------------------------------------------------------
+schema:
+
+  # --------------------------- 1. Customer Account ---------------------------
+  - id: customer_account_obj
+    name: customer_account
+    physicalName: bronze.customer_account
+    physicalType: table
+    businessName: Customer Account
+    description: Current and savings account master records from the core banking system (T24).
+    dataGranularityDescription: One row per account.
+    tags: [source, core-banking]
+    properties:
+      - name: account_id
+        businessName: Account Identifier
+        logicalType: string
+        physicalType: varchar(20)
+        primaryKey: true
+        primaryKeyPosition: 1
+        required: true
+        unique: true
+        classification: internal
+        examples: ['ACC-000123456', 'ACC-000987654']
+      - name: party_id
+        businessName: Party Identifier
+        logicalType: string
+        physicalType: varchar(20)
+        required: true
+        classification: internal
+        relationships:
+          - to: party_details.party_id
+            type: foreignKey
+        quality:
+          - metric: nullValues
+            mustBe: 0
+            description: Every account must reference a party.
+            dimension: completeness
+            type: library
+            severity: error
+            businessImpact: operational
+      - name: account_type
+        businessName: Account Type
+        logicalType: string
+        physicalType: varchar(20)
+        required: true
+        classification: internal
+        examples: ['CURRENT', 'SAVINGS', 'TERM_DEPOSIT']
+        quality:
+          - metric: invalidValues
+            mustBe: 0
+            validValues: ['CURRENT', 'SAVINGS', 'TERM_DEPOSIT']
+            description: Account type must be a known product class.
+            dimension: validity
+            type: library
+            severity: error
+            businessImpact: operational
+      - name: account_status
+        businessName: Account Status
+        logicalType: string
+        physicalType: varchar(15)
+        required: true
+        classification: internal
+        examples: ['ACTIVE', 'DORMANT', 'CLOSED']
+        quality:
+          - metric: invalidValues
+            mustBe: 0
+            validValues: ['ACTIVE', 'DORMANT', 'BLOCKED', 'CLOSED']
+            dimension: validity
+            type: library
+            severity: error
+            businessImpact: operational
+      - name: balance
+        businessName: Current Balance
+        logicalType: number
+        physicalType: decimal(18,2)
+        required: true
+        classification: confidential
+      - name: currency
+        businessName: Balance Currency
+        logicalType: string
+        physicalType: char(3)
+        required: true
+        classification: internal
+        examples: ['EUR', 'USD']
+      - name: branch_code
+        businessName: Servicing Branch Code
+        logicalType: string
+        physicalType: varchar(10)
+        classification: internal
+      - name: opened_date
+        businessName: Account Opened Date
+        logicalType: date
+        physicalType: date
+        required: true
+        classification: internal
+    quality:
+      - metric: rowCount
+        mustBeGreaterThan: 0
+        description: Daily load must not be empty; reconciled against core banking extract counts.
+        dimension: completeness
+        method: reconciliation
+        type: library
+        severity: error
+        businessImpact: operational
+        schedule: 0 6 * * *
+        scheduler: cron
+
+  # ---------------------------- 2. Party Details -----------------------------
+  - id: party_details_obj
+    name: party_details
+    physicalName: bronze.party_details
+    physicalType: table
+    businessName: Party Details
+    description: Party (customer) master data from the CRM party hub, including KYC status and risk rating.
+    dataGranularityDescription: One row per party.
+    tags: [source, crm, pii]
+    properties:
+      - name: party_id
+        businessName: Party Identifier
+        logicalType: string
+        physicalType: varchar(20)
+        primaryKey: true
+        primaryKeyPosition: 1
+        required: true
+        unique: true
+        classification: internal
+        examples: ['PTY-00045678']
+        quality:
+          - metric: duplicateValues
+            mustBe: 0
+            description: Party identifier must be unique in the party master.
+            dimension: uniqueness
+            type: library
+            severity: error
+            businessImpact: regulatory
+      - name: full_name
+        businessName: Full Legal Name
+        logicalType: string
+        physicalType: varchar(200)
+        required: true
+        classification: restricted
+      - name: date_of_birth
+        businessName: Date of Birth
+        logicalType: date
+        physicalType: date
+        required: true
+        classification: restricted
+      - name: national_id
+        businessName: National Identity Number
+        logicalType: string
+        physicalType: varchar(30)
+        required: true
+        classification: restricted
+        criticalDataElement: true
+        quality:
+          - metric: duplicateValues
+            mustBe: 0
+            description: A national id appearing on more than one party indicates a duplicate-party defect.
+            dimension: uniqueness
+            type: library
+            severity: error
+            businessImpact: regulatory
+      - name: email
+        businessName: Primary Email
+        logicalType: string
+        physicalType: varchar(320)
+        classification: restricted
+      - name: phone
+        businessName: Primary Phone
+        logicalType: string
+        physicalType: varchar(25)
+        classification: restricted
+      - name: address
+        businessName: Residential Address
+        logicalType: string
+        physicalType: varchar(500)
+        classification: restricted
+      - name: marketing_consent
+        businessName: Marketing Consent Flag
+        logicalType: boolean
+        physicalType: boolean
+        required: true
+        classification: internal
+      - name: kyc_status
+        businessName: KYC Status
+        logicalType: string
+        physicalType: varchar(15)
+        required: true
+        classification: confidential
+        examples: ['VERIFIED', 'PENDING', 'EXPIRED']
+        quality:
+          - metric: invalidValues
+            mustBe: 0
+            validValues: ['VERIFIED', 'PENDING', 'EXPIRED', 'REJECTED']
+            dimension: validity
+            type: library
+            severity: error
+            businessImpact: regulatory
+      - name: risk_rating
+        businessName: AML Risk Rating
+        logicalType: string
+        physicalType: varchar(10)
+        required: true
+        classification: confidential
+        examples: ['LOW', 'MEDIUM', 'HIGH']
+    quality:
+      - metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+        method: reconciliation
+        type: library
+        severity: error
+        businessImpact: regulatory
+        schedule: 0 6 * * *
+        scheduler: cron
+
+  # ------------------------- 3. Transaction Details --------------------------
+  - id: transaction_details_obj
+    name: transaction_details
+    physicalName: bronze.transaction_details
+    physicalType: table
+    businessName: Transaction Details
+    description: Posted debit/credit transactions from the payments hub.
+    dataGranularityDescription: One row per posted transaction.
+    tags: [source, payments]
+    properties:
+      - name: transaction_id
+        businessName: Transaction Identifier
+        logicalType: string
+        physicalType: varchar(36)
+        primaryKey: true
+        primaryKeyPosition: 1
+        required: true
+        unique: true
+        classification: internal
+      - name: account_id
+        businessName: Account Identifier
+        logicalType: string
+        physicalType: varchar(20)
+        required: true
+        classification: internal
+        relationships:
+          - to: customer_account.account_id
+            type: foreignKey
+        quality:
+          - metric: nullValues
+            mustBe: 0
+            description: Every transaction must reference an account.
+            dimension: completeness
+            type: library
+            severity: error
+            businessImpact: operational
+      - name: txn_type
+        businessName: Transaction Type
+        logicalType: string
+        physicalType: varchar(20)
+        required: true
+        classification: internal
+        examples: ['DEBIT', 'CREDIT']
+      - name: amount
+        businessName: Transaction Amount
+        logicalType: number
+        physicalType: decimal(18,2)
+        required: true
+        classification: confidential
+      - name: currency
+        businessName: Transaction Currency
+        logicalType: string
+        physicalType: char(3)
+        required: true
+        classification: internal
+      - name: channel
+        businessName: Origination Channel
+        logicalType: string
+        physicalType: varchar(20)
+        classification: internal
+        examples: ['MOBILE', 'BRANCH', 'ATM', 'ONLINE', 'POS']
+      - name: merchant_category
+        businessName: Merchant Category Code
+        logicalType: string
+        physicalType: varchar(10)
+        classification: internal
+      - name: txn_timestamp
+        businessName: Transaction Timestamp
+        logicalType: date
+        physicalType: timestamp
+        required: true
+        partitioned: true
+        partitionKeyPosition: 1
+        classification: internal
+    quality:
+      - metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+        method: reconciliation
+        type: library
+        severity: error
+        businessImpact: operational
+        schedule: 0 6 * * *
+        scheduler: cron
+
+  # ---------------------- 4. Customer Ticket Details -------------------------
+  - id: customer_ticket_details_obj
+    name: customer_ticket_details
+    physicalName: bronze.customer_ticket_details
+    physicalType: table
+    businessName: Customer_Ticket_Details
+    description: Service requests and complaints from the service management platform.
+    dataGranularityDescription: One row per ticket.
+    tags: [source, service-management]
+    properties:
+      - name: ticket_id
+        businessName: Ticket Identifier
+        logicalType: string
+        physicalType: varchar(20)
+        primaryKey: true
+        primaryKeyPosition: 1
+        required: true
+        unique: true
+        classification: internal
+      - name: party_id
+        businessName: Party Identifier
+        logicalType: string
+        physicalType: varchar(20)
+        required: true
+        classification: internal
+        relationships:
+          - to: party_details.party_id
+            type: foreignKey
+      - name: channel
+        businessName: Contact Channel
+        logicalType: string
+        physicalType: varchar(20)
+        classification: internal
+        examples: ['PHONE', 'EMAIL', 'CHAT', 'BRANCH']
+      - name: category
+        businessName: Ticket Category
+        logicalType: string
+        physicalType: varchar(50)
+        required: true
+        classification: internal
+        examples: ['COMPLAINT', 'SERVICE_REQUEST', 'FRAUD_DISPUTE']
+      - name: severity
+        businessName: Severity
+        logicalType: string
+        physicalType: varchar(10)
+        classification: internal
+        examples: ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']
+      - name: status
+        businessName: Ticket Status
+        logicalType: string
+        physicalType: varchar(15)
+        required: true
+        classification: internal
+        examples: ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED']
+      - name: opened_ts
+        businessName: Opened Timestamp
+        logicalType: date
+        physicalType: timestamp
+        required: true
+        classification: internal
+      - name: resolved_ts
+        businessName: Resolved Timestamp
+        logicalType: date
+        physicalType: timestamp
+        classification: internal
+      - name: csat_score
+        businessName: Customer Satisfaction Score
+        logicalType: integer
+        physicalType: smallint
+        classification: internal
+        examples: [1, 5]
+    quality:
+      - metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+        type: library
+        severity: warning
+        businessImpact: operational
+        schedule: 0 6 * * *
+        scheduler: cron
+
+  # ---------------------- 5. Customer Product Details ------------------------
+  - id: customer_product_details_obj
+    name: customer_product_details
+    physicalName: bronze.customer_product_details
+    physicalType: table
+    businessName: Customer Product Details
+    description: Product holdings (loans, cards, deposits, insurance) per party from the product catalogue.
+    dataGranularityDescription: One row per product holding.
+    tags: [source, product-catalogue]
+    properties:
+      - name: holding_id
+        businessName: Holding Identifier
+        logicalType: string
+        physicalType: varchar(20)
+        primaryKey: true
+        primaryKeyPosition: 1
+        required: true
+        unique: true
+        classification: internal
+      - name: party_id
+        businessName: Party Identifier
+        logicalType: string
+        physicalType: varchar(20)
+        required: true
+        classification: internal
+        relationships:
+          - to: party_details.party_id
+            type: foreignKey
+      - name: product_code
+        businessName: Product Code
+        logicalType: string
+        physicalType: varchar(15)
+        required: true
+        classification: internal
+        examples: ['MORT-FIX-25Y', 'CARD-GOLD']
+      - name: product_type
+        businessName: Product Type
+        logicalType: string
+        physicalType: varchar(20)
+        required: true
+        classification: internal
+        examples: ['LOAN', 'CARD', 'DEPOSIT', 'INSURANCE']
+        quality:
+          - metric: invalidValues
+            mustBe: 0
+            validValues: ['LOAN', 'CARD', 'DEPOSIT', 'INSURANCE', 'INVESTMENT']
+            dimension: validity
+            type: library
+            severity: error
+            businessImpact: operational
+      - name: start_date
+        businessName: Holding Start Date
+        logicalType: date
+        physicalType: date
+        required: true
+        classification: internal
+      - name: end_date
+        businessName: Holding End Date
+        logicalType: date
+        physicalType: date
+        classification: internal
+      - name: status
+        businessName: Holding Status
+        logicalType: string
+        physicalType: varchar(15)
+        required: true
+        classification: internal
+        examples: ['ACTIVE', 'MATURED', 'CANCELLED']
+    quality:
+      - metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+        type: library
+        severity: error
+        businessImpact: operational
+        schedule: 0 6 * * *
+        scheduler: cron
+
+  # ----------------------- 6. Customer 360 (output) --------------------------
+  - id: customer_360_obj
+    name: customer_360
+    physicalName: gold.customer_360
+    physicalType: table
+    businessName: Customer 360 Profile
+    description: >-
+      Produced gold table: one row per resolved party consolidating identity,
+      account aggregates, transaction behaviour, service experience, product
+      holdings and churn risk.
+    dataGranularityDescription: One row per resolved party.
+    tags: [output, gold, customer-360]
+    properties:
+      - name: party_id
+        businessName: Party Identifier
+        logicalType: string
+        physicalType: varchar(20)
+        primaryKey: true
+        primaryKeyPosition: 1
+        required: true
+        unique: true
+        classification: internal
+        quality:
+          - metric: duplicateValues
+            mustBe: 0
+            description: Exactly one profile row per party (uniqueness objective in the ODPS definition).
+            dimension: uniqueness
+            type: library
+            severity: error
+            businessImpact: operational
+      - name: full_name
+        businessName: Full Legal Name
+        logicalType: string
+        physicalType: varchar(200)
+        required: true
+        classification: restricted
+      - name: age_band
+        businessName: Age Band
+        logicalType: string
+        physicalType: varchar(10)
+        classification: internal
+        examples: ['25-34', '35-44']
+      - name: kyc_status
+        businessName: KYC Status
+        logicalType: string
+        physicalType: varchar(15)
+        required: true
+        classification: confidential
+      - name: risk_rating
+        businessName: AML Risk Rating
+        logicalType: string
+        physicalType: varchar(10)
+        required: true
+        classification: confidential
+      - name: marketing_consent
+        businessName: Marketing Consent Flag
+        logicalType: boolean
+        physicalType: boolean
+        required: true
+        classification: internal
+      - name: active_account_count
+        businessName: Active Account Count
+        logicalType: integer
+        physicalType: int
+        required: true
+        classification: internal
+      - name: total_balance_eur
+        businessName: Total Balance (EUR)
+        logicalType: number
+        physicalType: decimal(18,2)
+        required: true
+        classification: confidential
+      - name: txn_count_90d
+        businessName: Transaction Count Last 90 Days
+        logicalType: integer
+        physicalType: int
+        classification: internal
+      - name: txn_amount_90d
+        businessName: Transaction Amount Last 90 Days (EUR)
+        logicalType: number
+        physicalType: decimal(18,2)
+        classification: confidential
+      - name: preferred_channel
+        businessName: Preferred Transaction Channel
+        logicalType: string
+        physicalType: varchar(20)
+        classification: internal
+      - name: open_ticket_count
+        businessName: Open Ticket Count
+        logicalType: integer
+        physicalType: int
+        classification: internal
+      - name: avg_csat_12m
+        businessName: Average CSAT Last 12 Months
+        logicalType: number
+        physicalType: decimal(4,2)
+        classification: internal
+      - name: product_holding_count
+        businessName: Active Product Holding Count
+        logicalType: integer
+        physicalType: int
+        classification: internal
+      - name: product_types_held
+        businessName: Product Types Held
+        logicalType: array
+        physicalType: array<string>
+        classification: internal
+      - name: churn_risk_score
+        businessName: Churn Risk Score (0-1)
+        logicalType: number
+        physicalType: decimal(5,4)
+        classification: internal
+      - name: profile_refreshed_ts
+        businessName: Profile Refreshed Timestamp
+        logicalType: date
+        physicalType: timestamp
+        required: true
+        classification: internal
+    quality:
+      - metric: rowCount
+        mustBeGreaterThan: 0
+        description: Gold table must be populated after every daily refresh.
+        dimension: completeness
+        type: library
+        severity: error
+        businessImpact: operational
+        schedule: 0 7 * * *
+        scheduler: cron
+      - metric: reconciliation
+        description: Distinct party count in customer_360 reconciles to >= 98% of party_details (identity resolution KPI).
+        dimension: completeness
+        method: reconciliation
+        type: custom
+        engine: mock-dq-engine
+        severity: error
+        businessImpact: operational
+        schedule: 0 7 * * *
+        scheduler: cron
+
+# -----------------------------------------------------------------------------
+# Pricing (internal chargeback)
+# -----------------------------------------------------------------------------
+price:
+  priceAmount: 0
+  priceCurrency: EUR
+  priceUnit: internal chargeback per consuming domain
+
+# -----------------------------------------------------------------------------
+# Team
+# -----------------------------------------------------------------------------
+team:
+  name: customer-data-domain
+  members:
+    - username: a.virtanen
+      name: Aino Virtanen
+      role: Data Product Owner
+      dateIn: '2026-01-15'
+    - username: j.mkinen
+      name: Jussi Mäkinen
+      role: Data Engineer
+      dateIn: '2026-02-01'
+    - username: s.laine
+      name: Sofia Laine
+      role: Data Steward
+      dateIn: '2026-02-01'
+
+# -----------------------------------------------------------------------------
+# Access roles
+# -----------------------------------------------------------------------------
+roles:
+  - role: c360_reader
+    access: read
+    description: Read access to customer_360 with restricted (PII) columns masked.
+    firstLevelApprovers: Reporting Manager
+    secondLevelApprovers: Data Steward
+  - role: c360_pii_reader
+    access: read
+    description: Read access including restricted PII columns; requires documented lawful basis.
+    firstLevelApprovers: Data Product Owner
+    secondLevelApprovers: Data Protection Officer
+  - role: c360_writer
+    access: write
+    description: Pipeline service principals maintaining the gold table.
+    firstLevelApprovers: Data Product Owner
+    secondLevelApprovers: Platform Lead
+
+# -----------------------------------------------------------------------------
+# Service levels
+# -----------------------------------------------------------------------------
+slaProperties:
+  - property: generalAvailability
+    value: '2026-09-01T06:00:00+02:00'
+  - property: latency
+    value: 1
+    unit: d
+    element: customer_360.profile_refreshed_ts
+  - property: frequency
+    value: 1
+    unit: d
+    element: customer_360.profile_refreshed_ts
+  - property: timeOfAvailability
+    value: 06:00-07:00
+    element: customer_360.profile_refreshed_ts
+    driver: operational
+  - property: retention
+    value: 7
+    unit: y
+    element: customer_360
+    driver: regulatory
+  - property: endOfSupport
+    value: '2029-09-01T00:00:00+02:00'
+
+# -----------------------------------------------------------------------------
+# Support channels
+# -----------------------------------------------------------------------------
+support:
+  - channel: '#c360-help'
+    tool: slack
+    scope: interactive
+    url: 'https://meridianbank.slack.example/archives/c360-help'
+  - channel: c360-support
+    tool: email
+    scope: issues
+    url: 'mailto:c360-support@meridianbank.example'
+  - channel: '#c360-announcements'
+    tool: slack
+    scope: announcements
+    url: 'https://meridianbank.slack.example/archives/c360-announcements'
+
+# -----------------------------------------------------------------------------
+# Tags & custom properties (compliance metadata consumed by the audit agent)
+# -----------------------------------------------------------------------------
+tags:
+  - customer-360
+  - retail-banking
+  - pii
+  - churn
+
+customProperties:
+  - property: gdprLawfulBasis
+    value: legitimate_interest_and_contract
+  - property: bcbs239Criticality
+    value: material
+  - property: dataResidency
+    value: EU
+  - property: sourceOfRecord
+    value: 'core-banking:T24; crm:party-hub; payments:payments-hub; itsm:service-desk; product:catalogue'
+  - property: odpsProductId
+    value: c360-retail-banking-001
+
+authoritativeDefinitions:
+  - type: businessDefinition
+    url: 'https://data.meridianbank.example/glossary/customer-360'
+  - type: canonical
+    url: 'https://github.com/anilw07/Demo_DP/blob/main/data-contract/customer-360.odcs.yaml'
+
+contractCreatedTs: '2026-07-05T00:00:00+00:00'

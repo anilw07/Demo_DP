@@ -1,0 +1,81 @@
+{
+  "description": "Mock enterprise data catalog / data product marketplace used by the discovery agent. Contains pre-existing data products and registered source tables, including deliberate near-duplicates of the Customer 360 scope.",
+  "data_products": [
+    {
+      "product_id": "cam-retail-007",
+      "name": "Customer Analytics Mart",
+      "domain": "marketing",
+      "status": "production",
+      "description": "Monthly-refresh customer analytics mart with account balances and campaign responses.",
+      "entities": ["customer_account", "party_details", "campaign_response"],
+      "refresh": "monthly",
+      "owner": "marketing-analytics"
+    },
+    {
+      "product_id": "txn-insights-012",
+      "name": "Transaction Insights",
+      "domain": "payments",
+      "status": "production",
+      "description": "Daily transaction feature store for fraud and spend analytics.",
+      "entities": ["transaction_details", "merchant_reference"],
+      "refresh": "daily",
+      "owner": "payments-analytics"
+    },
+    {
+      "product_id": "loan-book-003",
+      "name": "Loan Book Reporting",
+      "domain": "risk",
+      "status": "production",
+      "description": "Regulatory loan book snapshots for credit risk reporting.",
+      "entities": ["loan_master", "collateral_details"],
+      "refresh": "monthly",
+      "owner": "credit-risk"
+    }
+  ],
+  "source_tables": [
+    {
+      "table": "customer_account",
+      "system": "core-banking:T24",
+      "registered_by": "customer-data-domain",
+      "certified": true
+    },
+    {
+      "table": "party_details",
+      "system": "crm:party-hub",
+      "registered_by": "customer-data-domain",
+      "certified": true
+    },
+    {
+      "table": "crm_party_master",
+      "system": "legacy-crm:siebel",
+      "registered_by": "marketing-analytics",
+      "certified": false,
+      "note": "Legacy copy of the party master; overlaps party_details on party_id, full_name, email, phone."
+    },
+    {
+      "table": "transaction_details",
+      "system": "payments:payments-hub",
+      "registered_by": "payments-analytics",
+      "certified": true
+    },
+    {
+      "table": "customer_ticket_details",
+      "system": "itsm:service-desk",
+      "registered_by": "service-ops",
+      "certified": true
+    },
+    {
+      "table": "customer_product_details",
+      "system": "product:catalogue",
+      "registered_by": "customer-data-domain",
+      "certified": true
+    },
+    {
+      "table": "acct_balance_daily",
+      "system": "core-banking:T24",
+      "registered_by": "finance-reporting",
+      "certified": false,
+      "note": "Daily balance snapshot; duplicates customer_account.balance at daily grain."
+    }
+  ]
+}
